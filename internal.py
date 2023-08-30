@@ -4,85 +4,139 @@ import sys
 import subprocess
 import time
 import random
+import os
+import json
 
 
-if len(sys.argv) < 6:
-    raise UserWarning("Please use six or more parameters")
-
-device_num = sys.argv[1]
-experiment_num = sys.argv[2]
-scan_time = sys.argv[3]
-devices = sys.argv[4]
-action = sys.argv[5]
-
-port=22
-target=int(devices)
-step=int(device_num)+1
-target_ip="172.50.0."+str(step+1)
-
-def build_tunnel(tunnel_type):
+def build_tunnel(tunnel_type, socat_port=80):
+    """Construct tunnel iteratively
+    """
+    session_name = "mySession"
+    subprocess.run(f"tmux new -d -s {session_name}", shell=True)
 
     #For any tunnel of n>=3 i[0]=1, i[1]=2, i[2]=3, even if i[3]=n. A special cases cases will be added later for n=1 and n=2
-      
-    cmd=""
-    alt_cmd=""
-    i=2
-
-    for tunnel in tunnel_type:
+    for i,tunnel in enumerate(tunnel_type):
+        hostname = f'dev{i+2}'
         if tunnel == "ssh":
-            cmd=cmd+" ssh dev"+str(i)+" -4"
-        elif tunnel == "nc":
-            cmd=cmd+" ncat dev"+str(i)+" 80"
+            cmd=f"ssh -tt {hostname}"
+        elif tunnel == "socat":
+            cmd = f"socat FILE:\`tty\`,raw,echo=0 tcp-connect:{hostname}:{socat_port}"
         else:
-            raise UserWarning("please provide appropiately formated sequence")
-        i=i+1
+            raise UserWarning(f"Invalid tunnel type {tunnel}.")
 
-    print(cmd)
-    tunnel_length=len(tunnel_type)
-    with open("/purple/results/prelim", 'w+') as prelim:
-        prelim.write(cmd)
-        prelim.write(str(alt_cmd))
-    subprocess.run(f"sudo timeout {scan_time} /bin/bash /opt/launch.sh {experiment_num} {tunnel_length} {cmd} > /purple/results/{experiment_num}/results.txt", shell=True)
+        # extend tunnel to next hop
+        print(f"Extending tunnel to {hostname} with {tunnel}.")
+        subprocess.run(f'tmux send-keys -t {session_name}.0 "{cmd}" Enter', shell=True)
+
+    return session_name
+
+
+def send_commands(session_name, command_count=10):
+    """Send commands / keystrokes to tmux with tunnel
+       Only runs on the first host
+    """
+    with open('/purple/cmd.txt', 'r') as fi:
+        cmds = [cmd.strip() for cmd in fi]
+
+    for _ in range(command_count):
+        cmd = random.choice(cmds)
+        subprocess.run(f'tmux send-keys -t {session_name}.0 "{cmd}" Enter', shell=True)
+        time.sleep(random.randint(1,10))
+
+
+def start_listeners(socat_port=80):
+    """Initialize listening services on stepping-stone hosts
+    """
+    # start SSH listener daemon
+    subprocess.run('service ssh start > /dev/null', shell=True)
+    
+    # start socat listener in background tmux pane
+    subprocess.run(f"tmux new -d -s socat", shell=True)
+    socat_cmd = f'socat tcp-listen:{socat_port},reuseaddr,fork EXEC:/bin/bash,pty,stderr,setsid,sigint,sane'
+    subprocess.run(f'tmux send-keys -t socat.0 "{socat_cmd}" Enter', shell=True)
+    
+    # DEBUG: verify listeners are listening as expected
+    #subprocess.run('netstat -antp', shell=True)
+
 
 def tunnel_randomizer(tunnel_length, tunnel_types):
-    
+    """create random tunnel protocol sequence
+    """
     c=0
     stages=[]
-
     while c<tunnel_length:
         stages.append(random.choice(tunnel_types))
         c=c+1
     return stages
 
 
+def set_delay(mean=200, deviation=10, distribution='normal', device='eth0'):
+    """
+    distribution options: 'normal', 'pareto', 'paretonormal'
+    TODO: it is not clear to me if netem delays are working as expected; needs to be investigated
+    """
+    cmd_str = f'tc qdisc add dev {device} root netem delay {mean}ms {deviation}ms'
+    if distribution is not None:
+        cmd_str = f'{cmd_str} distribution {distribution}'
+    subprocess.run(cmd_str, shell=True)
+
+
 #+=======Main method=========+
+if __name__ == "__main__":
 
-subprocess.run("service ssh restart", shell=True)
+    if len(sys.argv) < 5:
+        raise UserWarning("Please use five or more parameters")
+    
+    device_num = sys.argv[1]
+    experiment_num = sys.argv[2]
+    scan_time = sys.argv[3]
+    devices = sys.argv[4]
 
-#---The following helps to intialize the execution while starting a tcpdump on dev1, it is a bit hacky right now, investiagte
-#better soultions as well---"
+    results_root = f"/purple/results/{experiment_num}"
+    if not os.path.exists(results_root):
+        os.makedirs(results_root)
 
-if int(device_num) == 1 and int(action) != 1:
-    subprocess.run("timeout "+scan_time+" tcpdump -i eth0 -U -w /purple/tcpdump/"+experiment_num+"/dev"+device_num+".pcap &", shell=True)
-    #isubprocess.run("sudo /bin/bash -c /opt/listener.sh "+device_num+" "+experiment_num+" purple", shell=True)
-    tmp = subprocess.Popen("/bin/bash", shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    tmp.communicate(f"python3 /opt/internal.py {device_num} {experiment_num} {scan_time} {devices} 1".encode())
-    time.sleep(int(scan_time))
-elif int(action) == 1:
-    print("New Connection")
-    tunnel=tunnel_randomizer((int(devices)-1), ["nc", "ssh"])
-    build_tunnel(tunnel)
-    #build_tunnel(["nc", "ssh", "nc", "ssh"])
-else:
-    subprocess.run(f"sudo timeout {scan_time} bash /opt/listener.sh {device_num} {devices} {experiment_num} purple", shell=True)
-    subprocess.run("sudo service restart ssh", shell=True)
-    subprocess.run("timeout "+scan_time+" tcpdump -i eth0 -U -w /purple/tcpdump/"+experiment_num+"/dev"+device_num+".pcap &", shell=True)
-    if int(device_num) == int(devices):
-        with open("/opt/bob", 'w+') as b:
-            b.write("This is a secret\n")
-        with open("/opt/alice", 'w+') as a:
-            a.write("This is another secret\n")
-        with open("/opt/eve", 'w+') as e:
-            e.write("And rounding out the group\n")
-        subprocess.run("ls /opt", shell=True)
-    time.sleep(int(scan_time))
+    tcpdump_root = os.path.join(results_root, "tcpdump")
+    if not os.path.exists(tcpdump_root):
+        os.makedirs(tcpdump_root)
+
+    pcap_loc = os.path.join(tcpdump_root, f"dev{device_num}.pcap")
+    tcpdump_cmd = f"timeout {scan_time} tcpdump -i eth0 -U -w {pcap_loc}"
+    socat_port = 80
+    
+    # attacker host
+    if int(device_num) == 1:
+        set_delay(120, 20, 'normal')
+    
+        # start traffic capture (in the background)
+        subprocess.run(tcpdump_cmd+" &", shell=True)
+        time.sleep(2)   # wait 2 seconds before building tunnel to avoid missing packets
+    
+        # build tunnel
+        # tunnel is protocols are randomly selected for each hop
+        tunnel = tunnel_randomizer((int(devices)-1), ["socat", "ssh"])
+        session_name = build_tunnel(tunnel, socat_port = socat_port)
+
+        # log tunnel protocol info to results directory
+        tun_loc = os.path.join(results_root, 'tunnel.json')
+        with open(tun_loc, 'w') as fi:
+            data = {f'dev{i+2}': proto for i,proto in enumerate(tunnel)}
+            json.dump(data, fi, indent='\t')
+    
+        # send commands via tunnel
+        send_commands(session_name, command_count=random.randint(1,20))
+
+        # save tmux panel contents to file
+        log_loc = os.path.join(results_root, 'tmux.log')
+        log_cmd = f'tmux capture-pane -pS - > {log_loc}'
+        subprocess.run(f'tmux send-keys -t {session_name}.0 "{log_cmd}" Enter', shell=True)
+    
+    # stepping-stone and victim hosts
+    else:
+        set_delay(2, 1, 'normal')
+
+        # start listeners and ports
+        start_listeners(socat_port = socat_port)
+
+        # start traffic capture
+        subprocess.run(tcpdump_cmd, shell=True)

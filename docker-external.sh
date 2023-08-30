@@ -3,7 +3,6 @@ TOTAL_ROUNDS=2
 SCAN_TIME=300
 devices=4
 dir=$(pwd)
-TCP_DIR=${dir}/tcpdump
 RES_DIR=${dir}/results
 networkName="SSID"
 subnet="172.50.0.0/24"
@@ -50,15 +49,15 @@ echo "SCAN_TIME: $SCAN_TIME"
 echo "Rounds: $TOTAL_ROUNDS"
 
 echo ""
-sleep 15
 
 # makes uniform scan_time vars in .env for all experiements
+touch .env
 sed -i "1c\\SCAN_TIME=$SCAN_TIME" .env
 
 while [ $round -le $TOTAL_ROUNDS ]
 do
-    sudo service docker restart
-    sudo docker network prune -f
+    #service docker restart
+    docker network prune -f
     # echos current round into round.txt for uniform variable useage
     echo $round > round.txt
 
@@ -70,12 +69,11 @@ do
     # create exp tcpdump dir
 
     echo " [*] making directory: $round"
-    sudo mkdir -p ${TCP_DIR}/${round}
-    sudo mkdir -p ${RES_DIR}/${round}
+    mkdir -p ${RES_DIR}/${round}
 
     # start up docker containers
     echo "---build---"
-    docker compose up --build
+    docker compose up --build --abort-on-container-exit
     
     # # wait till dev1 is done 
     docker wait dev1

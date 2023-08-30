@@ -1,7 +1,7 @@
 #!/bin/bash
 
 devices=$1
-echo "---ssj-config.sh---"
+echo "---ssh-config.sh---"
 echo $devices
 sshfile=config
 # start_ip=172.18.0.2
