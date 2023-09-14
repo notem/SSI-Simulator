@@ -30,7 +30,7 @@ def get_streams(filepath, protocols):
         for proto in protocols:
             trans_proto = trans_map[proto]
             port_num = port_map[proto]
-            if pkt.haslayer(trans_proto) and pkt.haslayer('Raw') \
+            if pkt.haslayer(trans_proto) \
                     and (pkt[trans_proto].dport == port_num or pkt[trans_proto].sport == port_num):
                 # Get source and destination IP addresses
                 src = pkt['IP'].src
@@ -195,6 +195,8 @@ if __name__ == "__main__":
                 del IP_data[sample_ID]
                 del proto_data[sample_ID]
                 break
+
+    print(f"Total sample count after filtering: {len(data)}")
     
     # store dataset to file
     with open(args.out, 'wb') as fi:

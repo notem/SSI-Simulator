@@ -5,16 +5,10 @@
 #z is the number of devices
 z=$(($1))
 
-echo "---compose-bash.sh---"
-echo $z
-
 experiment_num=$2
 scan_time=$3
 subnet=$4
 gateway=$5
-
-echo "---scan_time---"
-echo ${scan_time}
 
 if [ $7 ]; then
      NETWORK_NAME=$7
@@ -30,8 +24,6 @@ START_HTTP_PORT=800$z
 #iaddr=$1+1
 ipV4="172.50.0.$(($z+1))"
 
-echo $START_PORT
-echo $SHARED_VOLUME
 SHARED_VOLUME_HOME=$SHARED_VOLUME:/purple/
 OUT=docker-compose.yml
 
@@ -46,7 +38,6 @@ write_entry () {
     echo "      context: ." >> $OUT
     echo "      dockerfile: Dockerfile" >> $OUT
     echo "    ports:" >> $OUT
-    # echo '      - "220$1:"' >> docker-compose1.yml
     echo "      - \"${START_SSH_PORT}:22\"" >> $OUT
     echo "      - \"${START_TCP_PORT}:9000\"" >> $OUT
     echo "      - \"${START_HTTP_PORT}:80\"">> $OUT

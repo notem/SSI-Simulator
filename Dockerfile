@@ -22,6 +22,7 @@ RUN touch ~/.ssh/authorized_keys
 COPY config /root/.ssh/
 RUN chmod 600 ~/.ssh/config
 RUN service ssh start
+RUN echo 'alias a="for ((c=1; c<n-2; c ++)); do echo -n '0'; done; echo -n '\n';"' >> ~/.bashrc
 
 # --------docker-external.sh 
 COPY internal.py /opt/

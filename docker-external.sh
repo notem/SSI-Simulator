@@ -1,6 +1,6 @@
 #!/bin/bash
 TOTAL_ROUNDS=2 
-SCAN_TIME=300
+SCAN_TIME=60
 devices=4
 dir=$(pwd)
 RES_DIR=${dir}/results
@@ -17,8 +17,8 @@ echo "---docker-external.sh---"
 if [ $# -eq 0 ]; then 
 
     echo " "
-    read -p "Enter number of devices: " devices
-    read -p "Enter scan duration in seconds: " SCAN_TIME
+    read -p "Enter max number of hosts: " devices
+    read -p "Enter timeout duration: " SCAN_TIME
     read -p "Enter experiment rounds: " TOTAL_ROUNDS
 else 
 
@@ -62,7 +62,9 @@ do
     echo $round > round.txt
 
     # create docker-compose.yml script
-    bash compose-bash.sh $devices $round $SCAN_TIME $subnet $gateway $networkName
+    dev_count=$(shuf -i 3-$devices -n 1)
+    echo " [*] Create docker-compose.yaml with $dev_count hosts"
+    bash compose-bash.sh $dev_count $round $SCAN_TIME $subnet $gateway $networkName
 
     echo " [*] Running round $round..."
    
@@ -72,12 +74,15 @@ do
     mkdir -p ${RES_DIR}/${round}
 
     # start up docker containers
-    echo "---build---"
-    docker compose up --build --abort-on-container-exit
-    
-    # # wait till dev1 is done 
-    docker wait dev1
-    echo " [*] dev1 exited"
+    echo "---create env---"
+    docker compose build --quiet
+    docker compose up --wait
+
+    echo "---dev1 log---"
+    # wait till dev1 is done 
+    docker attach --no-stdin dev1
+    exitcode=$(docker wait dev1)
+    echo " [*] dev1 exited with $exitcode"
     echo " [*] stopping & removing containers"
 
     # stop and delete all active containers
