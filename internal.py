@@ -13,10 +13,16 @@ tunnel_build_delay = lambda: random.uniform(0.5,1.5)
 tunnel_down_delay = lambda: random.uniform(0.5,1.5)
 
 
+ICMP_PORT = 2222
+SOCAT_PORT = 3333
 
-def build_tunnel(tunnel_type, socat_port=80):
+def build_tunnel(tunnel_type, socat_port=SOCAT_PORT, icmp_port=ICMP_PORT):
     """Construct tunnel iteratively
     """
+    # opts for SSH to prevent host checking causing hang-ups
+    ssh_opts = "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+    step_sleep = 0.2
+
     session_name = "mySession"
     subprocess.run(f"tmux new -d -s {session_name}", shell=True)
 
@@ -24,12 +30,26 @@ def build_tunnel(tunnel_type, socat_port=80):
     for i,tunnel in enumerate(tunnel_type):
         hostname = f'dev{i+2}'
         if tunnel == "ssh":
-            cmd=f"ssh -tt {hostname}"
+            cmd=f"ssh {ssh_opts} -tt {hostname}"
+            time.sleep(step_sleep)
+
         elif tunnel == "socat":
             cmd = f"socat FILE:\`tty\`,raw,echo=0 tcp-connect:{hostname}:{socat_port}"
+            time.sleep(step_sleep)
+
+        elif tunnel == "icmp":
+            # create ptunnel proxy connection
+            service_cmd = f'ptunnel-ng -d -p{hostname} -l{icmp_port} -rlocalhost -R22 -v-1'
+            subprocess.run(f'tmux send-keys -t {session_name}.0 "{service_cmd}" Enter', shell=True)
+            time.sleep(step_sleep) # small sleep to let service start
+
+            # open SSH connection to proxy host
+            cmd = f"ssh {ssh_opts} -tt -p{icmp_port} localhost"  
+
         # add additional protocol tunnel establishing stuff here
         #elif tunnel == "DNS":
         #    cmd = f"dnstunnel {hostname}" 
+
         else:
             raise UserWarning(f"Invalid tunnel type {tunnel}.")
 
@@ -37,6 +57,7 @@ def build_tunnel(tunnel_type, socat_port=80):
         print(f" [{i}/{len(tunnel_type)}] Extending tunnel to {hostname} with {tunnel}.")
         subprocess.run(f'tmux send-keys -t {session_name}.0 "{cmd}" Enter', shell=True)
         time.sleep(tunnel_build_delay())  # connection may take a moment to establish, wait to try to avoid issue
+        time.sleep(step_sleep)
 
     return session_name
 
@@ -76,7 +97,7 @@ def send_commands(session_name,
         time.sleep(delay_target)
 
 
-def start_listeners(socat_port=80):
+def start_listeners(socat_port=SOCAT_PORT):
     """Initialize listening services on stepping-stone hosts
     """
     # start SSH listener daemon
@@ -86,6 +107,11 @@ def start_listeners(socat_port=80):
     subprocess.run(f"tmux new -d -s socat", shell=True)
     socat_cmd = f'socat tcp-listen:{socat_port},reuseaddr,fork EXEC:/bin/bash,pty,stderr,setsid,sigint,sane'
     subprocess.run(f'tmux send-keys -t socat.0 "{socat_cmd}" Enter', shell=True)
+
+    # start ICMP tunnel listener
+    subprocess.run('tmux new -d -s icmpserver', shell=True)
+    icmp_cmd = f'ptunnel-ng -rlocalhost -R22' # configure proxy to only allow ssh connections to itself
+    subprocess.run(f'tmux send-keys -t icmpserver.0 "{icmp_cmd}" Enter', shell=True)
 
     # start dns tunnel listening script
     #subprocess.run(f"tmux new -d -s dnslistener", shell=True)
@@ -144,8 +170,6 @@ if __name__ == "__main__":
     ip_cmd = f"ip -4 addr show {net_device} | grep -oP '(?<=inet\s)\d+(\.\d+){3}'"
     tcpdump_cmd = f"timeout {scan_time} tcpdump -i {net_device} -U -w {pcap_loc}"# -n host $({ip_cmd})"
 
-    socat_port = 80
-    
     # attacker host
     if int(device_num) == 1:
         # TODO mean&deviation should differ between runs
@@ -157,8 +181,11 @@ if __name__ == "__main__":
     
         # build tunnel
         # tunnel is protocols are randomly selected for each hop
-        tunnel = tunnel_randomizer((int(devices)-1), ["socat", "ssh"])
-        session_name = build_tunnel(tunnel, socat_port = socat_port)
+        tunnel_options = ['socat', 'ssh', 'icmp']
+        #tunnel_options = ['ssh']
+        #tunnel_options = ['icmp']
+        tunnel = tunnel_randomizer((int(devices)-1), tunnel_options)
+        session_name = build_tunnel(tunnel)
 
         # log tunnel protocol info to results directory
         tun_loc = os.path.join(results_root, 'tunnel.json')
@@ -181,9 +208,9 @@ if __name__ == "__main__":
                       command_count = random.choice(stats['bursts']))
 
         # deconstruct tunnel
-        for _ in range(int(devices)-1):
-            time.sleep(tunnel_down_delay())  # avoid 
-            subprocess.run(f'tmux send-keys -t {session_name}.0 "exit" Enter', shell=True)
+        #for _ in range(int(devices)-1):
+        #    time.sleep(tunnel_down_delay())  # avoid 
+        #    subprocess.run(f'tmux send-keys -t {session_name}.0 "exit" Enter', shell=True)
 
         time.sleep(2)   # wait 2 seconds so no traffic is cut-off
 
@@ -191,7 +218,7 @@ if __name__ == "__main__":
         # TODO log sometimes cuts-off; need to investigate
         log_loc = os.path.join(results_root, 'tmux.log')
         log_cmd = f'tmux capture-pane -pS - > {log_loc}'
-        subprocess.run(f'tmux send-keys -t {session_name}.0 "{log_cmd}" Enter', shell=True)
+        subprocess.run(f'{log_cmd}', shell=True)
     
     # stepping-stone and victim hosts
     else:
@@ -202,7 +229,7 @@ if __name__ == "__main__":
         subprocess.run(alias_cmd, shell=True)
 
         # start listeners and ports
-        start_listeners(socat_port = socat_port)
+        start_listeners()
 
         # start traffic capture
         subprocess.run(tcpdump_cmd, shell=True)

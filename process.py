@@ -33,6 +33,11 @@ def get_streams(filepath, protocols):
             port_num = port_map[proto]
             if pkt.haslayer(trans_proto) \
                     and (pkt[trans_proto].dport == port_num or pkt[trans_proto].sport == port_num):
+
+                # avoid non-data packets
+                if trans_proto == "TCP" and not (pkt[trans_proto].flags & 0x08):
+                    continue
+
                 # Get source and destination IP addresses
                 src = pkt['IP'].src
                 dst = pkt['IP'].dst
@@ -147,9 +152,9 @@ if __name__ == "__main__":
                     stream = streams[(src_ip, dst_ip,proto)]
         
                     metadata = []
-                    init_time = float(stream[0].time)
+                    #init_time = float(stream[0].time)
                     for pkt in stream:
-                        cur_time = float(pkt.time) - init_time
+                        cur_time = float(pkt.time)# - init_time
                         pkt_dir = 1. if pkt['IP'].src == src_ip else -1.
                         pkt_size = len(pkt)
                         metadata += [(cur_time, pkt_size, pkt_dir)]
@@ -157,7 +162,7 @@ if __name__ == "__main__":
                         continue
         
                     metadata = np.array(metadata).T
-                    metadata[0,:] -= metadata[0,0]      # adjust timestamp sequence to begin at zero
+                    #metadata[0,:] -= metadata[0,0]      # adjust timestamp sequence to begin at zero
                     data_t.append(metadata)
 
                     proto_t.append(proto)
@@ -197,13 +202,31 @@ if __name__ == "__main__":
         host_IDs.remove(max(host_IDs))
     
         # check if stepping stones all correctly have two streams
+        bad = False
         for host_ID in host_IDs:
             if len(data[sample_ID][host_ID]) != 2:
                 print(f"\t[{sample_ID}] Host {host_ID} does not have exactly two streams.")
                 del data[sample_ID]
                 del IP_data[sample_ID]
                 del proto_data[sample_ID]
+                bad = True
                 break
+        if bad:
+            continue
+
+        # align all streams in chain sample to the same relative start time
+        stream_min_time = 1e100
+        host_IDs = set(data[sample_ID].keys())
+        for host_ID in host_IDs:
+            streams = data[sample_ID][host_ID]
+            for stream in streams:
+                stream_min_time = min(stream[0][0], stream_min_time)
+        for host_ID in host_IDs:
+            streams = data[sample_ID][host_ID]
+            for stream in streams:
+                stream[0][:] -= stream_min_time
+            data[sample_ID][host_ID] = streams
+
 
     print(f"Total sample count after filtering: {len(data)}")
     
